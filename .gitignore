@@ -1,0 +1,5 @@
+# This branch lives inside a server's ServerPlugins/ folder: ignore everything that is not ours.
+*
+!.gitignore
+!README.md
+!CalamityShock.dll
