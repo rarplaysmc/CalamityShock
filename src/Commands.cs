@@ -395,6 +395,7 @@ namespace CalamityShock
 
         private void Regions(TSPlayer p)
         {
+            if (!IsAdmin(p)) { p.SendErrorMessage("You need " + AdminPermission + "."); return; }
             var fx = _plugin.Regions.Effects;
             if (fx.Count == 0) { p.SendInfoMessage("No region effects configured (tshock/CalamityShock/regions.json)."); return; }
             p.SendInfoMessage("Region effects (define the regions themselves with /region):");
@@ -461,7 +462,7 @@ namespace CalamityShock
                     int dmgTaken = prm.Count > 2 && int.TryParse(prm[2], out int dd) ? dd : 20;
                     PlayerState st = _plugin.Players.Get(0);
                     if (st == null || TShock.Players[0] == null) { p.SendErrorMessage("No dummy."); return; }
-                    var fake = new GetDataHandlers.PlayerDamageEventArgs { ID = 0, Damage = (short)dmgTaken };
+                    var fake = new GetDataHandlers.PlayerDamageEventArgs { Player = TShock.Players[0], ID = 0, Damage = (short)dmgTaken };
                     _plugin.Players.OnPlayerHurt(fake);
                     p.SendSuccessMessage($"Dummy hurt for {dmgTaken}: rage {st.Rage:0}%, adrenaline {st.Adrenaline:0}%");
                     break;

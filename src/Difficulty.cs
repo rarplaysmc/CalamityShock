@@ -35,9 +35,27 @@ namespace CalamityShock
         /// NPC.NewNPC had already set (position, ai, target...). Call this from the NpcSpawn hook or right after
         /// NPC.NewNPC, i.e. before the NPC's first sync packet goes out.
         /// </summary>
+        // Which NPC slots (by generation) this plugin re-scaled, so Transform can tell "scaled by us" from "never scaled".
+        private static readonly int[] _appliedGeneration = CreateGenerationTable();
+
+        private static int[] CreateGenerationTable()
+        {
+            var t = new int[Main.maxNPCs + 1];
+            for (int i = 0; i < t.Length; i++) t[i] = -1;
+            return t;
+        }
+
+        /// <summary>True when Apply() ran on this very NPC instance (slot + generation).</summary>
+        public static bool WasApplied(NPC npc)
+        {
+            if (npc == null || npc.whoAmI < 0 || npc.whoAmI >= _appliedGeneration.Length) return false;
+            return _appliedGeneration[npc.whoAmI] == npc.generation;
+        }
+
         public static void Apply(NPC npc, float difficulty, int playerCountOverride, float defenseMultiplier)
         {
             if (npc == null || !npc.active) return;
+            if (npc.whoAmI >= 0 && npc.whoAmI < _appliedGeneration.Length) _appliedGeneration[npc.whoAmI] = npc.generation;
 
             Vector2 bottom = npc.Bottom;
             Vector2 velocity = npc.velocity;

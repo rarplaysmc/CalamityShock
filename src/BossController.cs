@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Terraria;
+using Terraria.ID;
 
 namespace CalamityShock
 {
@@ -177,8 +178,9 @@ namespace CalamityShock
             foreach (int i in OwnedActive())
             {
                 NPC n = Main.npc[i];
-                life += Math.Max(0, n.life);
+                if (!HasOwnLife(n)) continue;          // shared-life segments: only the master carries the pool
                 max += Math.Max(1, n.lifeMax);
+                if (CountsAsLiving(n)) life += Math.Max(0, n.life);
             }
             if (max > _peakLifeMax) _peakLifeMax = max;
             if (_peakLifeMax <= 0) return 0f;
@@ -190,8 +192,26 @@ namespace CalamityShock
         {
             int n = 0;
             foreach (int i in OwnedActive())
-                if (Main.npc[i].life > 0) n++;
+                if (CountsAsLiving(Main.npc[i])) n++;
             return n;
+        }
+
+        /// <summary>
+        /// False for a part whose life is a mirror of another NPC's (The Destroyer's segments all point at the head
+        /// through realLife): their own "life" is stale and they are deactivated silently, never killed.
+        /// </summary>
+        private static bool HasOwnLife(NPC n) => n.realLife < 0 || n.realLife == n.whoAmI;
+
+        /// <summary>
+        /// Whether a part still counts as alive. Besides shared-life segments, Moon Lord's head and hands are
+        /// special: when they are "killed" the game resets their life to full for the death animation (ai[0] = -2)
+        /// and only deactivates them after the core dies, without a kill event.
+        /// </summary>
+        private static bool CountsAsLiving(NPC n)
+        {
+            if (!HasOwnLife(n)) return false;
+            if ((n.type == NPCID.MoonLordHead || n.type == NPCID.MoonLordHand) && n.ai[0] <= -2f) return false;
+            return n.life > 0;
         }
 
         /// <summary>
@@ -208,8 +228,8 @@ namespace CalamityShock
             foreach (int i in OwnedActive())
             {
                 NPC n = Main.npc[i];
-                if (n.type == BaseType && n.life > 0) { NpcIndex = i; Generation = n.generation; return true; }
-                if (fallback < 0 || (n.life > 0 && Main.npc[fallback].life <= 0)) fallback = i;
+                if (n.type == BaseType && CountsAsLiving(n)) { NpcIndex = i; Generation = n.generation; return true; }
+                if (fallback < 0 || (CountsAsLiving(n) && !CountsAsLiving(Main.npc[fallback]))) fallback = i;
             }
             if (fallback >= 0)
             {

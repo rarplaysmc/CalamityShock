@@ -171,6 +171,7 @@ namespace CalamityShock
         /// <summary>Resolve names to ids and sort phases. Returns false if the definition is unusable.</summary>
         public bool Resolve(string context)
         {
+            DisplayName ??= ""; SpawnMessage ??= ""; DefeatMessage ??= ""; EnrageMessage ??= ""; RequiredBiome ??= "Any";
             if (!Ids.TryNpc(BaseNpc, out BaseNpcId) || BaseNpcId <= 0)
             {
                 Log.Warn($"{context}: unknown BaseNpc '{BaseNpc}' - boss disabled");
@@ -188,6 +189,7 @@ namespace CalamityShock
             Phases.Sort((a, b) => b.HealthBelowPercent.CompareTo(a.HealthBelowPercent));
             foreach (var phase in Phases)
             {
+                phase.Message ??= "";
                 phase.Attacks ??= new List<AttackPattern>();
                 phase.Attacks.RemoveAll(a => a == null);
                 phase.Minions ??= new List<MinionSpawn>();

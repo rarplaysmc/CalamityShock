@@ -53,20 +53,27 @@ namespace CalamityShock
             return new string(chars.ToArray());
         }
 
-        private static bool TryResolve(Dictionary<string, int> map, string text, out int id)
+        /// <summary>Names come from the id tables; a plain number is accepted only inside the table's valid range.</summary>
+        private static bool TryResolve(Dictionary<string, int> map, string text, out int id, int minId, int maxExclusive)
         {
             id = 0;
             if (string.IsNullOrWhiteSpace(text)) return false;
             text = text.Trim();
-            if (int.TryParse(text, out id)) return true;
+            if (int.TryParse(text, out id))
+            {
+                if (id >= minId && id < maxExclusive) return true;
+                id = 0;
+                return false;
+            }
             return map.TryGetValue(Normalize(text), out id);
         }
 
-        public static bool TryNpc(string text, out int id) => TryResolve(Npcs, text, out id);
-        public static bool TryProjectile(string text, out int id) => TryResolve(Projectiles, text, out id);
-        public static bool TryItem(string text, out int id) => TryResolve(Items, text, out id);
-        public static bool TryTile(string text, out int id) => TryResolve(Tiles, text, out id);
-        public static bool TryBuff(string text, out int id) => TryResolve(Buffs, text, out id);
+        // Negative NPC ids are the game's net ids for slime/zombie/skeleton variants.
+        public static bool TryNpc(string text, out int id) => TryResolve(Npcs, text, out id, -NPCID.NegativeIDCount, NPCID.Count);
+        public static bool TryProjectile(string text, out int id) => TryResolve(Projectiles, text, out id, 0, ProjectileID.Count);
+        public static bool TryItem(string text, out int id) => TryResolve(Items, text, out id, 0, ItemID.Count);
+        public static bool TryTile(string text, out int id) => TryResolve(Tiles, text, out id, 0, TileID.Count);
+        public static bool TryBuff(string text, out int id) => TryResolve(Buffs, text, out id, 0, BuffID.Count);
 
         /// <summary>Display name of an NPC type/netID as the game shows it ("King Slime").</summary>
         public static string NpcName(int netId)

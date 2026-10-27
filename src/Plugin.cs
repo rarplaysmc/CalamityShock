@@ -318,7 +318,9 @@ namespace CalamityShock
         private void OnWorldSave(WorldSaveEventArgs args)
         {
             if (!_loaded) return;
-            Progression.Save();
+            // World saves run on TShock's save thread; progress.json is already written on every change, so this is
+            // only a safety net - run it on the game thread so it cannot race a kill being recorded.
+            RunSafely(() => Progression.Save(), false);
         }
     }
 }

@@ -70,6 +70,7 @@ namespace CalamityShock
         {
             if (string.IsNullOrWhiteSpace(Id)) { Log.Warn("events.json: an event without an Id was skipped"); return false; }
             Id = Id.Trim().ToLowerInvariant();
+            DisplayName ??= ""; StartMessage ??= ""; CompleteMessage ??= ""; FailMessage ??= ""; RequiredBiome ??= "Any"; Type ??= "waves";
             string ctx = "event '" + Id + "'";
             Waves ??= new List<EventWave>();
             Bosses ??= new List<string>();
@@ -84,6 +85,7 @@ namespace CalamityShock
             BossAiPatches.RemoveAll(ptch => ptch == null);
             foreach (EventWave w in Waves)
             {
+                w.Name ??= ""; w.Message ??= "";
                 w.Spawns ??= new List<EventSpawn>();
                 w.Spawns.RemoveAll(sp => sp == null);
                 w.Spawns.RemoveAll(sp =>
@@ -191,6 +193,8 @@ namespace CalamityShock
         private const string FileName = "events.json";
         private readonly CalamityShockPlugin _plugin;
         private readonly Dictionary<int, byte> _owned = new Dictionary<int, byte>();
+        /// <summary>Which wave entry each owned NPC came from, so a despawned one can be re-spawned.</summary>
+        private readonly Dictionary<int, int> _ownedEntry = new Dictionary<int, int>();
         private readonly HashSet<string> _participants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private long _tick;
         private long _startTick;
@@ -226,7 +230,7 @@ namespace CalamityShock
             if (string.IsNullOrWhiteSpace(id)) return null;
             id = id.Trim();
             return Definitions.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase))
-                ?? Definitions.FirstOrDefault(e => string.Equals(e.DisplayName.Replace(" ", ""), id.Replace(" ", ""), StringComparison.OrdinalIgnoreCase));
+                ?? Definitions.FirstOrDefault(e => string.Equals((e.DisplayName ?? "").Replace(" ", ""), id.Replace(" ", ""), StringComparison.OrdinalIgnoreCase));
         }
 
         // ------------------------------------------------------------------ start / stop
@@ -243,6 +247,7 @@ namespace CalamityShock
             }
             Active = def;
             _owned.Clear();
+            _ownedEntry.Clear();
             _participants.Clear();
             _startTick = _tick;
             _waveIndex = -1;
@@ -271,6 +276,7 @@ namespace CalamityShock
                 if (n.active && n.generation == kv.Value) Net.KillNpcSilently(kv.Key);
             }
             _owned.Clear();
+            _ownedEntry.Clear();
             // Rush bosses still standing would keep fighting with loot suppression now off; remove them.
             foreach (BossController c in _rushBosses)
                 if (!c.Finished && !c.Killed) for (int i = 0; i < Main.maxNPCs; i++) if (c.Owns(i)) Net.KillNpcSilently(i);
@@ -285,6 +291,7 @@ namespace CalamityShock
             if (def == null) return;
             Active = null;
             _owned.Clear();
+            _ownedEntry.Clear();
             _rushBosses.Clear();
             Net.Broadcast(def.Format(def.CompleteMessage), Net.EventColor);
             _plugin.Progression.RecordKill("event:" + def.Id);
@@ -327,10 +334,36 @@ namespace CalamityShock
             return n;
         }
 
+        /// <summary>
+        /// Owned NPCs that are gone without having been killed (they despawned when every player walked away, or
+        /// were removed by something else) give their quota back, so the wave cannot be "cleared" by leaving.
+        /// </summary>
+        private void ReclaimDespawned()
+        {
+            List<int> gone = null;
+            foreach (var kv in _owned)
+            {
+                NPC npc = Main.npc[kv.Key];
+                if (npc.active && npc.generation == kv.Value) continue;
+                (gone ??= new List<int>()).Add(kv.Key);
+            }
+            if (gone == null) return;
+            foreach (int slot in gone)
+            {
+                _owned.Remove(slot);
+                if (_ownedEntry.TryGetValue(slot, out int entry))
+                {
+                    _ownedEntry.Remove(slot);
+                    if (entry >= 0 && entry < _spawnedPerEntry.Length && _spawnedPerEntry[entry] > 0) _spawnedPerEntry[entry]--;
+                }
+            }
+        }
+
         private void TickWaves(EventDefinition def)
         {
             if (_waveIndex < 0 || _waveIndex >= def.Waves.Count) { Complete(); return; }
             EventWave wave = def.Waves[_waveIndex];
+            ReclaimDespawned();
             int alive = AliveOwned();
 
             bool allSpawned = true;
@@ -366,7 +399,7 @@ namespace CalamityShock
             if (sp.BossDef != null)
             {
                 BossController c = _plugin.Bosses.SpawnCustomNearPlayer(sp.BossDef, target);
-                if (c != null) { _owned[c.NpcIndex] = Main.npc[c.NpcIndex].generation; _spawnedPerEntry[entry]++; }
+                if (c != null) { _owned[c.NpcIndex] = Main.npc[c.NpcIndex].generation; _ownedEntry[c.NpcIndex] = entry; _spawnedPerEntry[entry]++; }
                 else _spawnedPerEntry[entry]++; // could not spawn (no slot); don't block the wave forever
                 return;
             }
@@ -380,6 +413,7 @@ namespace CalamityShock
                 if (idx >= 0 && idx < Main.maxNPCs && Main.npc[idx].active)
                 {
                     _owned[idx] = Main.npc[idx].generation;
+                    _ownedEntry[idx] = entry;
                     _spawnedPerEntry[entry]++;
                     Net.SyncNpc(idx);
                 }
@@ -460,7 +494,7 @@ namespace CalamityShock
         public void OnNpcKilled(NPC npc)
         {
             if (Active == null || npc == null) return;
-            if (_owned.TryGetValue(npc.whoAmI, out byte gen) && gen == npc.generation) _owned.Remove(npc.whoAmI);
+            if (_owned.TryGetValue(npc.whoAmI, out byte gen) && gen == npc.generation) { _owned.Remove(npc.whoAmI); _ownedEntry.Remove(npc.whoAmI); }
         }
 
         public bool OwnsNpc(int index) => _owned.TryGetValue(index, out byte gen) && Main.npc[index].active && Main.npc[index].generation == gen;

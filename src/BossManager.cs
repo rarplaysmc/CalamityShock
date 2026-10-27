@@ -48,6 +48,7 @@ namespace CalamityShock
         private int _lastCreateSlot = -1;
         private int _lastCreateParent = -1;
         private byte _lastCreateParentGen;
+        private bool _lastCreateNatural;
         private bool _inExtraAiStep;
         private long _tick;
 
@@ -135,7 +136,7 @@ namespace CalamityShock
             if (string.IsNullOrWhiteSpace(id)) return null;
             id = id.Trim();
             return Definitions.FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase))
-                ?? Definitions.FirstOrDefault(d => string.Equals(d.DisplayName.Replace(" ", ""), id.Replace(" ", ""), StringComparison.OrdinalIgnoreCase));
+                ?? Definitions.FirstOrDefault(d => string.Equals((d.DisplayName ?? "").Replace(" ", ""), id.Replace(" ", ""), StringComparison.OrdinalIgnoreCase));
         }
 
         public void ClearControllers() => _controllers.Clear();
@@ -175,9 +176,6 @@ namespace CalamityShock
                 if (NPC.AnyNPCs(def.BaseNpcId)) return $"{Ids.NpcName(def.BaseNpcId)} is already in the world.";
             }
 
-            if (def.SummonItemId > 0 && Main.ServerSideCharacter)
-                Crafting.ConsumeFromInventory(player, def.SummonItemId, Math.Max(1, def.SummonItemStack));
-
             ModeSettings mode = Mode;
             var ctx = new SummonContext
             {
@@ -206,8 +204,12 @@ namespace CalamityShock
                 // SpawnOnPlayer refused (no free slot, or the NPC spawn was cancelled by another plugin).
                 return "The boss could not be spawned - no free NPC slot or the spawn was blocked.";
             }
+            // Only now is the summon item spent (with server-side characters; otherwise the client's inventory is its own).
+            if (def.SummonItemId > 0 && Main.ServerSideCharacter)
+                Crafting.ConsumeFromInventory(player, def.SummonItemId, Math.Max(1, def.SummonItemStack));
 
             NPC npc = Main.npc[ctx.SpawnedIndex];
+            BossLifetime(npc);
             // The first full sync (spawn bit set) makes clients re-create the NPC, which resets its name - so sync first, name second.
             Net.SyncNpc(ctx.SpawnedIndex);
             if (!string.IsNullOrEmpty(def.DisplayName))
@@ -260,6 +262,7 @@ namespace CalamityShock
             if (ctx.SpawnedIndex < 0) return null;
 
             NPC npc = Main.npc[ctx.SpawnedIndex];
+            BossLifetime(npc);
             Net.SyncNpc(ctx.SpawnedIndex);
             if (!string.IsNullOrEmpty(def.DisplayName))
             {
@@ -274,6 +277,16 @@ namespace CalamityShock
             Net.Broadcast(def.Format(def.SpawnMessage), Net.BossColor);
             Log.Info($"Spawned {def.Id} (npc #{ctx.SpawnedIndex}, {Difficulty.Describe(npc)})");
             return controller;
+        }
+
+        /// <summary>
+        /// NPC.NewNPC gives an NPC the ordinary ~12 s inactivity timer; the game's own SpawnBoss multiplies it by 20
+        /// so a boss survives everyone being off-screen for a while (dead players respawning at spawn, for one).
+        /// </summary>
+        private static void BossLifetime(NPC npc)
+        {
+            int bossTime = (int)(NPC.activeTime * 1.25) * 20;   // what SpawnBoss ends up with
+            if (npc != null && npc.active && npc.timeLeft < bossTime) npc.timeLeft = bossTime;
         }
 
         /// <summary>Spawns a custom boss a screen away from a player, no checks (events).</summary>
@@ -307,6 +320,7 @@ namespace CalamityShock
                     int idx = NPC.NewNPC(new EntitySource_BossSpawn(tp), (int)tp.Center.X, spawnY, npcType);
                     if (idx >= 0 && idx < Main.maxNPCs && Main.npc[idx].active)
                     {
+                        BossLifetime(Main.npc[idx]);
                         Net.SyncNpc(idx);
                         Net.Broadcast($"{Ids.NpcName(npcType)} has awoken!", new Microsoft.Xna.Framework.Color(175, 75, 255));
                     }
@@ -364,6 +378,9 @@ namespace CalamityShock
         {
             _lastCreateSlot = e.Slot;
             _lastCreateParent = -1;
+            // The game's natural spawner uses EntitySource_SpawnNPC; statues (EntitySource_Wiring), commands and
+            // plugins use other sources, and those must not be replaced by region spawn tables.
+            _lastCreateNatural = e.Source is EntitySource_SpawnNPC;
             if (e.Source is Terraria.DataStructures.EntitySource_Parent p && p.Entity is NPC parent && parent.whoAmI >= 0 && parent.whoAmI < Main.maxNPCs)
             {
                 _lastCreateParent = parent.whoAmI;
@@ -409,6 +426,7 @@ namespace CalamityShock
             //    the spawn source; fall back to "same part type, spawned next to the boss" when there is no parent.
             int parent = _lastCreateSlot == index ? _lastCreateParent : -1;
             bool parentValid = parent >= 0 && Main.npc[parent].generation == _lastCreateParentGen;
+            bool natural = _lastCreateSlot == index && _lastCreateNatural;
             _lastCreateSlot = -1;
             foreach (BossController c in _controllers)
             {
@@ -460,7 +478,7 @@ namespace CalamityShock
             // 6. Everything else hostile: region effects first (natural spawns only), then the mode's enemy scaling.
             if (npc.friendly || npc.townNPC || npc.lifeMax <= 5) return;
             float regionBonus = 0f;
-            if (parent < 0 && _plugin.Regions.OnNaturalSpawn(npc, index, out regionBonus))
+            if (natural && _plugin.Regions.OnNaturalSpawn(npc, index, out regionBonus))
             {
                 args.Handled = true; // replaced by the region's own spawn; the original is already gone
                 return;
@@ -479,8 +497,11 @@ namespace CalamityShock
             if (npc == null) return false;
             if (npc.boss) return true;
             int t = npc.type;
-            if (t < 0 || t >= Terraria.ID.NPCID.Count || t == Terraria.ID.NPCID.DungeonGuardian) return false;
-            return Terraria.ID.NPCID.Sets.BossHeadTextures[t] >= 0;
+            if (t < 0 || t >= NPCID.Count) return false;
+            // Map icons without the boss flag that are not bosses: the Dungeon Guardian (unkillable), the Lunatic
+            // Cultist's clones, and Golem's head (a part of Golem, killed before the body).
+            if (t == NPCID.DungeonGuardian || t == NPCID.CultistBossClone || t == NPCID.GolemHead || t == NPCID.GolemHeadFree) return false;
+            return NPCID.Sets.BossHeadTextures[t] >= 0;
         }
 
         /// <summary>Definition used for a vanilla boss: the augment from bosses.json (if enabled) or an empty one that still knows the boss's parts.</summary>
@@ -501,7 +522,9 @@ namespace CalamityShock
         public void OnTransform(NPC npc, HookEvents.Terraria.NPC.TransformEventArgs args)
         {
             if (npc == null || !args.ContinueExecution || Main.netMode != 2) return;
-            bool ours = Math.Abs(npc.difficulty - Main.Difficulty) > 0.001f || _controllers.Any(c => !c.Finished && c.Owns(npc.whoAmI));
+            // Only NPCs this plugin actually re-scaled keep their numbers through a Transform; anything else (critters
+            // the game never scales, so their difficulty stays 1 even in Expert) must get the vanilla treatment.
+            bool ours = Difficulty.WasApplied(npc) || _controllers.Any(c => !c.Finished && c.Owns(npc.whoAmI));
             if (!ours) return;
             _transformOverride = new TransformOverride { Npc = npc, Difficulty = npc.difficulty, PlayerCount = npc.statsAreScaledForThisManyPlayers };
         }
@@ -515,7 +538,7 @@ namespace CalamityShock
             if (!args.ContinueExecution) return;
             NPCSpawnParams p = args.spawnparams;
             p.difficultyOverride = ov.Difficulty;
-            p.playerCountForMultiplayerDifficultyOverride = ov.PlayerCount > 1 ? ov.PlayerCount : (int?)null;
+            p.playerCountForMultiplayerDifficultyOverride = ov.PlayerCount >= 1 ? ov.PlayerCount : (int?)null;
             args.spawnparams = p;
         }
 
@@ -633,8 +656,10 @@ namespace CalamityShock
                     Log.Info($"Restored vanilla boss flags changed by the death of {def.Id}.");
                 }
             }
-            // Mode-wide extra boss loot (vanilla and custom bosses alike).
-            if (!suppressLoot) Loot.DropTable(mode.ExtraBossLoot, where, Config);
+            // Mode-wide extra boss loot (vanilla and custom bosses alike). The Twins are two controllers but one
+            // fight: the loot drops with whichever twin dies last.
+            bool twinStillUp = (npc.type == NPCID.Retinazer && NPC.AnyNPCs(NPCID.Spazmatism)) || (npc.type == NPCID.Spazmatism && NPC.AnyNPCs(NPCID.Retinazer));
+            if (!suppressLoot && !twinStillUp) Loot.DropTable(mode.ExtraBossLoot, where, Config);
             Log.Info($"Boss {def.Id} defeated after {seconds}s.");
         }
 
@@ -671,46 +696,62 @@ namespace CalamityShock
         public void OnBroadcast(ServerBroadcastEventArgs args)
         {
             if (args.Handled || args.Message == null) return;
-            if (_controllers.Count == 0 && _pendingSummon == null) return;
             string text;
             try { text = args.Message.ToString(); } catch { return; }
             if (string.IsNullOrEmpty(text)) return;
 
-            // "X has awoken!" for a vanilla boss we just refused to spawn (progression gate).
-            if (_suppressAwokenName != null && _tick - _suppressAwokenTick <= 1 && text.Contains(_suppressAwokenName) && text.Contains("has awoken"))
+            // "X has awoken!" for a vanilla boss we just refused to spawn (progression gate). Checked before anything
+            // else: a gate usually fires when no controller exists at all.
+            if (_suppressAwokenName != null)
             {
-                _suppressAwokenName = null;
-                args.Handled = true;
-                return;
+                bool fresh = _tick - _suppressAwokenTick <= 1;
+                if (fresh && IsAwokenMessage(text, _suppressAwokenName))
+                {
+                    _suppressAwokenName = null;
+                    args.Handled = true;
+                    return;
+                }
+                if (!fresh) _suppressAwokenName = null;
             }
+            if (_controllers.Count == 0 && _pendingSummon == null) return;
 
             // "X has awoken!" while we are summoning a custom boss built on X: we announce it ourselves.
             if (_pendingSummon != null && !string.IsNullOrEmpty(_pendingSummon.Def.DisplayName))
             {
                 string vanilla = Ids.NpcName(_pendingSummon.Def.BaseNpcId);
-                if (!string.IsNullOrEmpty(vanilla) && text.Contains(vanilla) && text.Contains("has awoken"))
+                if (!string.IsNullOrEmpty(vanilla) && IsAwokenMessage(text, vanilla))
                 {
                     args.Handled = true;
                     return;
                 }
             }
 
+            // "X has been defeated!" for the base NPC of a custom boss that just died: we announce that ourselves too.
+            // Any other broadcast is left alone (a vanilla X fighting alongside, gate messages, other plugins).
             foreach (BossController c in _controllers)
             {
                 if (!c.IsCustom || string.IsNullOrEmpty(c.Def.DisplayName)) continue;
                 string vanilla = Ids.NpcName(c.Def.BaseNpcId);
-                if (string.IsNullOrEmpty(vanilla) || !text.Contains(vanilla)) continue;
-
-                if (text.Contains("has been defeated"))
-                {
-                    // Only swallow the vanilla line if it is *our* boss that just died.
-                    if (c.PartsAlive() == 0) { args.Handled = true; return; }
-                    continue;
-                }
-                if (text.Contains("has awoken")) continue;
-                args.Message = NetworkText.FromLiteral(text.Replace(vanilla, c.Def.DisplayName));
-                return;
+                if (string.IsNullOrEmpty(vanilla) || !IsDefeatedMessage(text, vanilla)) continue;
+                if (c.PartsAlive() == 0) { args.Handled = true; return; }
             }
+        }
+
+        /// <summary>The game's own announcement for this NPC name, in the server's language (with an English fallback).</summary>
+        private static bool IsAwokenMessage(string text, string npcName)
+        {
+            if (string.IsNullOrEmpty(npcName) || !text.Contains(npcName)) return false;
+            string expected = null;
+            try { expected = Language.GetTextValue("Announcement.HasAwoken", npcName); } catch { }
+            return text == expected || text.Contains("has awoken");
+        }
+
+        private static bool IsDefeatedMessage(string text, string npcName)
+        {
+            if (string.IsNullOrEmpty(npcName) || !text.Contains(npcName)) return false;
+            string expected = null;
+            try { expected = Language.GetTextValue("Announcement.HasBeenDefeated_Single", npcName); } catch { }
+            return text == expected || text.Contains("has been defeated");
         }
 
         /// <summary>Status lines for /cs status.</summary>
