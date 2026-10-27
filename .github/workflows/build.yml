@@ -45,6 +45,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" bin/Release/CalamityShock.dll \
-            --repo "$GITHUB_REPOSITORY" --title "CalamityShock $GITHUB_REF_NAME" \
-            --notes "Built by GitHub Actions from $GITHUB_SHA. Drop CalamityShock.dll into ServerPlugins/."
+          # A release made in the GitHub UI already exists when its tag push triggers this run: then just attach the DLL.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" bin/Release/CalamityShock.dll --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" bin/Release/CalamityShock.dll \
+              --repo "$GITHUB_REPOSITORY" --title "CalamityShock $GITHUB_REF_NAME" \
+              --notes "Built by GitHub Actions from $GITHUB_SHA. Drop CalamityShock.dll into ServerPlugins/."
+          fi

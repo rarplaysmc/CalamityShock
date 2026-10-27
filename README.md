@@ -47,7 +47,8 @@ GitHub's servers and publishes `CalamityShock.dll`
 
 * on the **`release` branch** - that branch holds only the DLL, so a server can `git pull` it (next section);
 * as a **workflow artifact** (Actions tab, open the run, download "CalamityShock");
-* attached to a **GitHub Release** whenever you push a tag such as `v0.2.0`.
+* attached to a **GitHub Release** whenever you push a tag such as `v0.2.0` (`git tag v0.2.0 && git push origin v0.2.0`),
+  or create a release with a new tag in the GitHub UI - the build attaches the DLL to it either way.
 
 First-time setup of the repository, from this folder (needs git and the [GitHub CLI](https://cli.github.com/)):
 
