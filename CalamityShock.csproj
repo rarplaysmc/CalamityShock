@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>CalamityShock</RootNamespace>
+    <AssemblyName>CalamityShock</AssemblyName>
+    <Version>0.2.0</Version>
+    <Authors>you</Authors>
+    <Description>Calamity-style difficulty modes, re-tuned bosses, progression, loot and server-side crafting for TShock 6.x</Description>
+    <!-- Only CalamityShock.dll goes into ServerPlugins; never copy TShock/OTAPI next to it. -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!--
+    Normal build (what you run at home):
+        dotnet build -c Release
+    This pulls TShock 6.2.1 + TSAPI + OTAPI from NuGet. The output DLL is bin/Release/CalamityShock.dll.
+  -->
+  <ItemGroup Condition="'$(TShockRefDir)' == ''">
+    <PackageReference Include="TShock" Version="6.2.1" />
+  </ItemGroup>
+
+  <!--
+    Offline build against an unpacked TShock 6.2.1 release folder (the one that contains
+    ServerPlugins/TShockAPI.dll and bin/OTAPI.dll):
+        dotnet build -c Release -p:TShockRefDir=/path/to/unpacked/tshock
+  -->
+  <ItemGroup Condition="'$(TShockRefDir)' != ''">
+    <Reference Include="TShockAPI">
+      <HintPath>$(TShockRefDir)/ServerPlugins/TShockAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TerrariaServer">
+      <HintPath>$(TShockRefDir)/bin/TerrariaServer.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OTAPI">
+      <HintPath>$(TShockRefDir)/bin/OTAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OTAPI.Runtime">
+      <HintPath>$(TShockRefDir)/bin/OTAPI.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ModFramework">
+      <HintPath>$(TShockRefDir)/bin/ModFramework.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
